@@ -99,6 +99,7 @@ jobs:
         if: ${{ steps.cache-qt.outputs.cache-hit != 'true' }}
         run: |
           $modules = @($env:QT_MODULES -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+          if ($modules.Count -eq 0) { throw 'modules 输入为空，至少需要 qtbase' }
           Write-Host ("模块：{0}" -f ($modules -join ', '))
           $t = [System.Diagnostics.Stopwatch]::StartNew()
           & ./scripts/build-qt-static.ps1 `
