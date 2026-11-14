@@ -125,7 +125,11 @@ jobs:
         id: pack
         run: |
           $sevenZip = Join-Path $env:ProgramFiles '7-Zip\7z.exe'
-          if (-not (Test-Path $sevenZip)) { $sevenZip = (Get-Command 7z.exe).Source }
+          if (-not (Test-Path $sevenZip)) {
+            $cmd = Get-Command 7z.exe -ErrorAction SilentlyContinue
+            if (-not $cmd) { throw '运行器上找不到 7-Zip' }
+            $sevenZip = $cmd.Source
+          }
           $out = Join-Path $env:RUNNER_TEMP "qt-$env:QT_VERSION-msvc2019-static-x64.7z"
           & $sevenZip a -t7z -mx=5 -mmt=on $out "$env:QT_PREFIX\*" | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "7z 压缩失败（退出码 $LASTEXITCODE）" }
