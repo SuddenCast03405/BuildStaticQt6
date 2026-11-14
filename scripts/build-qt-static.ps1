@@ -294,18 +294,28 @@ function Test-StaticQt {
     $coreDll = Join-Path $InstallPrefix 'bin\Qt6Core.dll'
     if (Test-Path $coreDll) { $failed += "发现共享库 $coreDll，说明不是静态构建" }
 
+    # 版本校验：优先用 qmake，缺失时退回到 Qt6ConfigVersion.cmake
+    $ver = $null
     $qmake = Join-Path $InstallPrefix 'bin\qmake.exe'
     if (Test-Path $qmake) {
         $ver = (& $qmake -query QT_VERSION) | Select-Object -First 1
         Write-Info "qmake -query QT_VERSION = $ver"
-        if ($ExpectVersion -and $ver -ne $ExpectVersion) {
-            $failed += "Qt 版本不符：期望 $ExpectVersion，实际 $ver"
-        }
         $conf = (& $qmake -query QT_CONFIG) | Out-String
         if ($conf -notmatch 'static') { $failed += 'qmake QT_CONFIG 中没有 static' }
     }
-    else {
-        $failed += "缺少 $qmake"
+    if (-not $ver) {
+        $verFile = Join-Path $InstallPrefix 'lib\cmake\Qt6\Qt6ConfigVersion.cmake'
+        if (Test-Path $verFile) {
+            $m = Select-String -Path $verFile -Pattern 'PACKAGE_VERSION\s+"([^"]+)"' | Select-Object -First 1
+            if ($m) { $ver = $m.Matches[0].Groups[1].Value }
+        }
+        Write-Info "从 Qt6ConfigVersion.cmake 读到版本：$ver"
+    }
+    if (-not $ver) {
+        $failed += '无法确定已安装的 Qt 版本（qmake 与 Qt6ConfigVersion.cmake 都不可用）'
+    }
+    elseif ($ExpectVersion -and $ver -ne $ExpectVersion) {
+        $failed += "Qt 版本不符：期望 $ExpectVersion，实际 $ver"
     }
 
     if (-not $ExpectStaticRuntime) {
