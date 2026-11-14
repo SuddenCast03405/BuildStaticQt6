@@ -44,6 +44,9 @@
 .PARAMETER Force
     init-repository 加 -f，强制重新同步子模块。
 
+.PARAMETER ExtraConfigureArgs
+    追加给 configure.bat 的额外参数，例如 -schannel、-no-feature-accessibility。
+
 .EXAMPLE
     .\build-qt-static.ps1 -QtVersion 6.8.5 -StaticRuntime -Prefix C:\Qt\Qt-6.8.5-msvc2019-static
 
@@ -63,7 +66,8 @@ param(
     [switch]   $StaticRuntime,
     [switch]   $ReuseSource,
     [switch]   $VerifyOnly,
-    [switch]   $Force
+    [switch]   $Force,
+    [string[]] $ExtraConfigureArgs = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -254,6 +258,7 @@ function Invoke-QtConfigure {
         '-opengl', 'desktop'
     )
     if ($StaticRuntime) { $cfgArgs += '-static-runtime' }
+    if ($ExtraConfigureArgs.Count -gt 0) { $cfgArgs += $ExtraConfigureArgs }
 
     $cfgLine = "call `"$configureBat`" $($cfgArgs -join ' ')"
     Write-Info "configure：$cfgLine"
