@@ -42,7 +42,7 @@
     只校验 $Prefix 下已有产物，不克隆也不编译（CI 命中缓存时使用）。
 
 .PARAMETER Force
-    init-repository 加 -f，强制重新同步子模块。
+    init-repository 加 --force，强制重新同步子模块。
 
 .PARAMETER ExtraConfigureArgs
     追加给 configure.bat 的额外参数，例如 -schannel、-no-feature-accessibility。
@@ -163,7 +163,8 @@ function Assert-Compiler {
     if (-not $clPath) { throw 'PATH 中找不到 cl.exe，MSVC 环境不可用。' }
 
     $banner = (& cmd.exe /c "cl 2>&1") | Out-String
-    if ($banner -match '(\d+\.\d+\.\d+\.\d+)') {
+    # cl 的版本号可能是 19.29.30159（三段）或 19.40.33811.0（四段）
+    if ($banner -match '(\d+\.\d+\.\d+(?:\.\d+)?)') {
         $clVersion = $matches[1]
     }
     else {
@@ -222,19 +223,39 @@ function Get-QtSource {
         Invoke-Native -FilePath 'git' -Arguments @('clone', '--depth', '1', '--branch', $Tag, '--recurse-submodules=no', 'https://github.com/qt/qt5.git', $SrcRoot) -FailMessage '克隆 qt/qt5 失败'
     }
 
-    if (-not (Get-Command perl -ErrorAction SilentlyContinue)) {
-        throw 'PATH 中找不到 perl。请安装 Strawberry Perl，或把 Git for Windows 的 perl 加入 PATH。'
-    }
-
+    # Qt 6.8 的 init-repository 已经改成 CMake 实现，Windows 上走 .bat；
+    # 老版本（<=6.7）只有 Perl 脚本，所以两条路都留。
+    $subset = "--module-subset=$($Modules -join ',')"
+    if ($Force) { $subset += ' --force' }
     Write-Info "init-repository 子模块子集：$($Modules -join ', ')"
-    Push-Location $SrcRoot
-    try {
-        $initArgs = @("--module-subset=$($Modules -join ',')")
-        if ($Force) { $initArgs += '-f' }
-        Invoke-Native -FilePath 'perl' -Arguments (@('init-repository') + $initArgs) -FailMessage 'init-repository 失败'
+
+    $initBat = Join-Path $SrcRoot 'init-repository.bat'
+    if (Test-Path $initBat) {
+        $bat = New-TempBatch @(
+            "cd /d `"$SrcRoot`"",
+            "call `"$initBat`" $subset",
+            'exit /b %ERRORLEVEL%'
+        )
+        try {
+            & cmd.exe /c $bat
+            if ($LASTEXITCODE -ne 0) { throw "init-repository 失败（退出码 $LASTEXITCODE）" }
+        }
+        finally {
+            Remove-Item $bat -Force -ErrorAction SilentlyContinue
+        }
     }
-    finally {
-        Pop-Location
+    else {
+        if (-not (Get-Command perl -ErrorAction SilentlyContinue)) {
+            throw '既没有 init-repository.bat，PATH 中也没有 perl，无法初始化子模块。'
+        }
+        Push-Location $SrcRoot
+        try {
+            $initArgs = @($subset)
+            Invoke-Native -FilePath 'perl' -Arguments (@('init-repository') + $initArgs) -FailMessage 'init-repository 失败'
+        }
+        finally {
+            Pop-Location
+        }
     }
 }
 
