@@ -1,0 +1,173 @@
+name: Build Qt 6.8 static (MSVC 2019 x64)
+
+# 触发方式：只保留手动触发，避免任何 push/PR 顺带烧掉 Action 分钟数。
+# 如需打 tag 时自动构建，取消下面 push 段的注释即可。
+on:
+  workflow_dispatch:
+    inputs:
+      qt_version:
+        description: 'Qt 版本（6.8.x）'
+        required: true
+        default: '6.8.5'
+      modules:
+        description: '要构建的模块子集（逗号分隔，越少越快）'
+        required: true
+        default: 'qtbase,qtdeclarative,qtsvg,qttools,qtshadertools,qtimageformats,qt5compat,qtlanguageserver'
+      static_runtime:
+        description: '使用静态 CRT（/MT，对应 Qt -static-runtime）'
+        type: boolean
+        default: true
+      use_cache:
+        description: '复用源码 / 产物缓存（命中缓存时不会重新编译）'
+        type: boolean
+        default: true
+      runner:
+        description: '运行器标签（自建机可改成 self-hosted）'
+        required: true
+        default: 'windows-2022'
+  # push:
+  #   tags:
+  #     - 'qt-*'
+
+permissions:
+  contents: read
+
+# 同一时间只保留一个构建，新任务直接顶掉旧任务
+concurrency:
+  group: qt-static-${{ inputs.qt_version }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  QT_VERSION: ${{ inputs.qt_version }}
+  QT_MODULES: ${{ inputs.modules }}
+  QT_PREFIX: C:\Qt\Qt-${{ inputs.qt_version }}-msvc2019-static
+
+jobs:
+  build:
+    name: Qt ${{ inputs.qt_version }} / MSVC2019 / static
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 355
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 预检 MSVC 2019 (v142) 工具集
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path $vswhere)) { throw '找不到 vswhere.exe，当前运行器不是带 Visual Studio 的 Windows 环境' }
+
+          $vsPath = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath) | Select-Object -First 1
+          Write-Host "Visual Studio: $vsPath"
+
+          $toolsDir = Join-Path $vsPath 'VC\Tools\MSVC'
+          if (-not (Test-Path $toolsDir)) { throw "找不到 MSVC 工具集目录：$toolsDir" }
+
+          $toolsets = (Get-ChildItem $toolsDir -Directory).Name | Sort-Object
+          Write-Host ("已安装工具集：{0}" -f ($toolsets -join ', '))
+
+          $has142 = $toolsets | Where-Object { $_ -like '14.29*' }
+          if (-not $has142) {
+            Write-Host '✗ 缺少 MSVC 2019 (v142 / cl 19.29) 工具集。可选方案：' -ForegroundColor Red
+            Write-Host '  1) 换用 windows-2022 镜像（通常自带 v142）或自建机 + VS2019 生成工具'
+            Write-Host '  2) 去掉 -MsvcToolset 14.29，改用 v143 构建（与 MSVC2019 二进制兼容）'
+            throw '缺少 MSVC 2019 (v142) 工具集'
+          }
+          Write-Host "✓ v142 工具集可用：$($has142 -join ', ')" -ForegroundColor Green
+
+      - name: 恢复源码缓存
+        id: cache-src
+        if: ${{ inputs.use_cache }}
+        uses: actions/cache/restore@v4
+        with:
+          path: C:\Qt\src\qt5
+          key: qt-src-${{ inputs.qt_version }}-v1
+
+      - name: 恢复已构建产物缓存
+        id: cache-qt
+        if: ${{ inputs.use_cache }}
+        uses: actions/cache/restore@v4
+        with:
+          path: C:\Qt\Qt-${{ inputs.qt_version }}-msvc2019-static
+          key: qt-install-${{ inputs.qt_version }}-${{ inputs.static_runtime }}-${{ hashFiles('scripts/build-qt-static.ps1') }}
+
+      - name: 构建 Qt 静态库
+        if: ${{ steps.cache-qt.outputs.cache-hit != 'true' }}
+        run: |
+          $modules = @($env:QT_MODULES -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+          Write-Host ("模块：{0}" -f ($modules -join ', '))
+          $t = [System.Diagnostics.Stopwatch]::StartNew()
+          & ./scripts/build-qt-static.ps1 `
+              -QtVersion $env:QT_VERSION `
+              -Modules $modules `
+              -SrcRoot 'C:\Qt\src\qt5' `
+              -BuildDir 'C:\Qt\build' `
+              -Prefix $env:QT_PREFIX `
+              -MsvcToolset '14.29' `
+              -StaticRuntime:${{ inputs.static_runtime }}
+          Write-Host ("构建阶段耗时 {0}" -f $t.Elapsed.ToString('hh\:mm\:ss'))
+
+      - name: 校验产物
+        run: |
+          & ./scripts/build-qt-static.ps1 `
+              -QtVersion $env:QT_VERSION `
+              -Prefix $env:QT_PREFIX `
+              -MsvcToolset '14.29' `
+              -StaticRuntime:${{ inputs.static_runtime }} `
+              -VerifyOnly
+
+      - name: 打包为 7z
+        id: pack
+        run: |
+          $sevenZip = Join-Path $env:ProgramFiles '7-Zip\7z.exe'
+          if (-not (Test-Path $sevenZip)) { $sevenZip = (Get-Command 7z.exe).Source }
+          $out = Join-Path $env:RUNNER_TEMP "qt-$env:QT_VERSION-msvc2019-static-x64.7z"
+          & $sevenZip a -t7z -mx=5 -mmt=on $out "$env:QT_PREFIX\*" | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "7z 压缩失败（退出码 $LASTEXITCODE）" }
+          $mb = (Get-Item $out).Length / 1MB
+          Write-Host ("产物包：{0}（{1:N1} MB）" -f $out, $mb)
+          "size_mb={0:N1}" -f $mb | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: 保存源码缓存
+        if: ${{ inputs.use_cache && steps.cache-src.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: C:\Qt\src\qt5
+          key: qt-src-${{ inputs.qt_version }}-v1
+
+      - name: 保存产物缓存
+        if: ${{ inputs.use_cache && steps.cache-qt.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: C:\Qt\Qt-${{ inputs.qt_version }}-msvc2019-static
+          key: qt-install-${{ inputs.qt_version }}-${{ inputs.static_runtime }}-${{ hashFiles('scripts/build-qt-static.ps1') }}
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: qt-${{ inputs.qt_version }}-msvc2019-static-x64
+          path: ${{ runner.temp }}/qt-*-msvc2019-static-x64.7z
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: 写入任务摘要
+        if: ${{ always() }}
+        run: |
+          $cacheHit = '${{ steps.cache-qt.outputs.cache-hit }}'
+          $status = if ($cacheHit -eq 'true') { '命中缓存，未重新编译' } else { '完整构建' }
+          @(
+            "## Qt $env:QT_VERSION 静态构建",
+            "",
+            "| 项 | 值 |",
+            "| --- | --- |",
+            "| 编译器 | MSVC 2019 (v142, cl 19.29) |",
+            "| 架构 / 运行时 | x64 / $(if ('${{ inputs.static_runtime }}' -eq 'true') { '/MT 静态 CRT' } else { '/MD' }) |",
+            "| 模块 | ``$env:QT_MODULES`` |",
+            "| 产物大小 | ${{ steps.pack.outputs.size_mb }} MB |",
+            "| 本次状态 | $status |",
+            "| 安装前缀 | ``$env:QT_PREFIX`` |"
+          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
