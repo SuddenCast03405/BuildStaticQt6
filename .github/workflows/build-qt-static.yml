@@ -100,7 +100,9 @@ jobs:
         run: |
           $modules = @($env:QT_MODULES -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
           if ($modules.Count -eq 0) { throw 'modules 输入为空，至少需要 qtbase' }
-          Write-Host ("模块：{0}" -f ($modules -join ', '))
+          # 注意：开关参数必须传真正的布尔值，直接写 -StaticRuntime:true 会被当成字符串
+          $mt = ('${{ inputs.static_runtime }}' -eq 'true')
+          Write-Host ("模块：{0}；静态CRT={1}" -f ($modules -join ', '), $mt)
           $t = [System.Diagnostics.Stopwatch]::StartNew()
           & ./scripts/build-qt-static.ps1 `
               -QtVersion $env:QT_VERSION `
@@ -109,16 +111,17 @@ jobs:
               -BuildDir 'C:\Qt\build' `
               -Prefix $env:QT_PREFIX `
               -MsvcToolset '14.29' `
-              -StaticRuntime:${{ inputs.static_runtime }}
+              -StaticRuntime:$mt
           Write-Host ("构建阶段耗时 {0}" -f $t.Elapsed.ToString('hh\:mm\:ss'))
 
       - name: 校验产物
         run: |
+          $mt = ('${{ inputs.static_runtime }}' -eq 'true')
           & ./scripts/build-qt-static.ps1 `
               -QtVersion $env:QT_VERSION `
               -Prefix $env:QT_PREFIX `
               -MsvcToolset '14.29' `
-              -StaticRuntime:${{ inputs.static_runtime }} `
+              -StaticRuntime:$mt `
               -VerifyOnly
 
       - name: 打包为 7z
