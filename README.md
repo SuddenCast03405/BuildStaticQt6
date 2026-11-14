@@ -2,7 +2,20 @@
 
 用 GitHub Actions 编译 **Qt 6.8 静态库（MSVC 2019 / v142 / x64，可选 /MT）**，一次运行产出可直接放进 `C:\Qt\...` 的安装目录。
 
-设计目标是 **尽可能少消耗 Action**：只手动触发、单 job、只构建需要的模块、源码和产物都进缓存 —— 缓存命中时整个 workflow 只跑 1～2 分钟（仅校验 + 打包）。
+设计目标是 **尽可能少消耗 Action**：只手动触发、单 job、只构建需要的模块、源码和产物都进缓存 —— 缓存命中时整个 workflow 只跑 1～5 分钟（仅校验 + 打包）。
+
+## 0. 实测结果（2026-11-14）
+
+| 项 | 结果 |
+| --- | --- |
+| 运行 | [run 43580543001](https://github.com/SuddenCast03405/BuildStaticQt6/actions/runs/43580543001) `success`，12/12 步骤全绿，总耗时 **1h14m** |
+| 编译阶段 | `01:02:33`（4 vCPU，Qt 6.8.5 + 8 个模块，MSVC 19.29.30159 / v142） |
+| 安装产物 | `1.14 GB`，`lib\Qt6Core.lib` 29.1 MB，`qmake -query QT_VERSION = 6.8.5` |
+| CRT 校验 | `dumpbin /directives` → `LIBCMT=True / MSVCRT=False`，即真正的 `/MT` |
+| 打包上传 | `qt-6.8.5-msvc2019-static-x64.7z` = **157.4 MB** |
+| 缓存命中重跑 | [run 43588277546](https://github.com/SuddenCast03405/BuildStaticQt6/actions/runs/43588277546) `success`，**4m44s**，`构建 Qt 静态库` 步骤被 skipped |
+
+也就是说：**Qt 6.8 + MSVC2019 静态这一组合确实能编出来**，只是要先踢开 Qt 的版本闸门（见下方"常见坑"）。
 
 ---
 
@@ -105,12 +118,13 @@ cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=C:\Qt\Qt-6.8.5-msvc2019-static
 
 ## 5. 常见坑
 
+- **Qt 6.8 官方要求 MSVC 2022**：`qtbase/cmake/QtWindowsHelpers.cmake` 里有硬检查，MSVC < 19.30 会直接 configure 失败（"Qt requires at least Visual Studio 2022"）。本脚本在 `-MsvcToolset 14.2x` 时会自动追加 `-- -DQT_NO_MSVC_MIN_VERSION_CHECK=ON` 绕过——**注意必须放在 `--` 之后**，写在前面会被 Qt 当成编译器宏（`QT_EXTRA_DEFINES`）而不是 CMake 变量，闸门根本不会打开（这个坑实测踩过）。绕过之后 8 个模块全部编译通过，但这是**不受支持**的组合，没有官方保证；要绝对稳就用 `-MsvcToolset 14.4`（v143），它与 MSVC2019 二进制兼容。
 - **qtwebengine 不要进静态构建**：它要 Chromium 的 gn/ninja 全套流程，单次 6 小时都未必够，且授权复杂。默认已排除。
 - **TLS 后端**：默认沿用 Qt 的 OpenSSL 运行时加载，静态程序运行期仍需要 `libssl-3-x64.dll` / `libcrypto-3-x64.dll`。想彻底零 DLL，加 `-ExtraConfigureArgs '-schannel' -ExtraConfigureArgs '-no-openssl'` 用 Windows 自带 Schannel。
 - **改了模块列表要先清缓存**：产物缓存的 key 里带了脚本文本哈希，但没带模块列表；换模块时用 `use_cache=false` 跑一次，或删掉仓库的 Actions cache。
 - **Windows 运行器镜像会变**：`windows-2022` 目前自带 v142（`VC\Tools\MSVC\14.29.*`）。万一哪天被移除，workflow 的预检步骤会直接报错并给出两条路：换 `self-hosted`，或去掉 `14.29` 用 v143（v143 与 MSVC2019 ABI 兼容，只是不再是"MSVC2019 编译"）。
 - **磁盘**：这份构建在运行器上大约占 20~30 GB，`windows-2022` 默认盘够用；Qt 全模块构建才需要额外清盘。
-- **耗时参考**：4 vCPU 下 `qtbase` 约 35~50 分钟，加 `qtdeclarative` 到 1.5~2 小时，再加 `qttools/qtimageformats/qt5compat` 约 2~2.5 小时。
+- **耗时参考（实测）**：4 vCPU 下 8 个模块从零构建，编译 1h02m、全流程 1h14m；安装目录 1.14 GB，压缩后 157 MB。只要 `qtbase` 时约 35~50 分钟。
 
 ## 6. 文件
 
