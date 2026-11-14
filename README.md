@@ -97,6 +97,7 @@ cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=C:\Qt\Qt-6.8.5-msvc2019-static
 | `-Jobs` | 0（=CPU 核数） | 并行度 |
 | `-VerifyOnly` | 关 | 只校验不编译 |
 | `-Force` | 关 | 强制重新同步子模块 |
+| `-ExtraConfigureArgs` | 空 | 追加 configure 参数，如 `-schannel`、`-no-feature-accessibility` |
 
 默认模块：`qtbase,qtdeclarative,qtsvg,qttools,qtshadertools,qtimageformats,qt5compat,qtlanguageserver`
 
@@ -105,6 +106,7 @@ cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=C:\Qt\Qt-6.8.5-msvc2019-static
 ## 5. 常见坑
 
 - **qtwebengine 不要进静态构建**：它要 Chromium 的 gn/ninja 全套流程，单次 6 小时都未必够，且授权复杂。默认已排除。
+- **TLS 后端**：默认沿用 Qt 的 OpenSSL 运行时加载，静态程序运行期仍需要 `libssl-3-x64.dll` / `libcrypto-3-x64.dll`。想彻底零 DLL，加 `-ExtraConfigureArgs '-schannel' -ExtraConfigureArgs '-no-openssl'` 用 Windows 自带 Schannel。
 - **改了模块列表要先清缓存**：产物缓存的 key 里带了脚本文本哈希，但没带模块列表；换模块时用 `use_cache=false` 跑一次，或删掉仓库的 Actions cache。
 - **Windows 运行器镜像会变**：`windows-2022` 目前自带 v142（`VC\Tools\MSVC\14.29.*`）。万一哪天被移除，workflow 的预检步骤会直接报错并给出两条路：换 `self-hosted`，或去掉 `14.29` 用 v143（v143 与 MSVC2019 ABI 兼容，只是不再是"MSVC2019 编译"）。
 - **磁盘**：这份构建在运行器上大约占 20~30 GB，`windows-2022` 默认盘够用；Qt 全模块构建才需要额外清盘。
