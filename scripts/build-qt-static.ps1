@@ -279,6 +279,11 @@ function Invoke-QtConfigure {
         '-opengl', 'desktop'
     )
     if ($StaticRuntime) { $cfgArgs += '-static-runtime' }
+    # Qt 6.8 官方最低要求 MSVC 2022 (19.30)，用 v142 时必须关掉这道版本闸门
+    if ($MsvcToolset -like '14.2*') {
+        Write-Info '检测到 MSVC 2019 (v142)：Qt 6.8 官方要求 >= 19.30，已加 -DQT_NO_MSVC_MIN_VERSION_CHECK=ON 跳过版本检查'
+        $cfgArgs += '-DQT_NO_MSVC_MIN_VERSION_CHECK=ON'
+    }
     if ($ExtraConfigureArgs.Count -gt 0) { $cfgArgs += $ExtraConfigureArgs }
 
     $cfgLine = "call `"$configureBat`" $($cfgArgs -join ' ')"
