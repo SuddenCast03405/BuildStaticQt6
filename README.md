@@ -70,7 +70,7 @@ cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=C:\Qt\Qt-6.8.5-msvc2019-static
 
 ## 4. 本地跑
 
-脚本不依赖 Actions，Windows 本机装了 VS2019（或 VS2022 + v142 组件）、CMake、Ninja、Perl 即可：
+脚本不依赖 Actions，Windows 本机装了 VS2019（或 VS2022 + v142 组件）、CMake、Ninja 即可；Qt 6.8 的 `init-repository` 已改为 CMake 实现，不再需要 Perl（更老的版本会自动回退到 Perl 路径）。
 
 ```powershell
 # 完整构建
