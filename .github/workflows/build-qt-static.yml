@@ -141,7 +141,8 @@ jobs:
           "size_mb={0:N1}" -f $mb | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: 保存源码缓存
-        if: ${{ inputs.use_cache && steps.cache-src.outputs.cache-hit != 'true' }}
+        # 源码缓存即使后续构建失败也值得保存，省掉下次 3 分钟的 clone + init
+        if: ${{ inputs.use_cache && steps.cache-src.outputs.cache-hit != 'true' && !cancelled() }}
         uses: actions/cache/save@v4
         with:
           path: C:\Qt\src\qt5
