@@ -326,14 +326,24 @@ function Test-StaticQt {
     $coreDll = Join-Path $InstallPrefix 'bin\Qt6Core.dll'
     if (Test-Path $coreDll) { $failed += "发现共享库 $coreDll，说明不是静态构建" }
 
+    # 静态性以 Qt6Config.cmake 的 QT6_IS_SHARED_LIBS_BUILD 为准
+    $qtConfig = Join-Path $InstallPrefix 'lib\cmake\Qt6\Qt6Config.cmake'
+    if (Test-Path $qtConfig) {
+        $m = Select-String -Path $qtConfig -Pattern 'QT6_IS_SHARED_LIBS_BUILD\s+"?(ON|OFF)"?' | Select-Object -First 1
+        if ($m) {
+            $flag = $m.Matches[0].Groups[1].Value
+            Write-Info "Qt6Config: QT6_IS_SHARED_LIBS_BUILD=$flag"
+            if ($flag -eq 'ON') { $failed += 'Qt6Config 显示为共享库构建（QT6_IS_SHARED_LIBS_BUILD=ON）' }
+        }
+    }
+
     # 版本校验：优先用 qmake，缺失时退回到 Qt6ConfigVersion.cmake
     $ver = $null
     $qmake = Join-Path $InstallPrefix 'bin\qmake.exe'
     if (Test-Path $qmake) {
         $ver = (& $qmake -query QT_VERSION) | Select-Object -First 1
         Write-Info "qmake -query QT_VERSION = $ver"
-        $conf = (& $qmake -query QT_CONFIG) | Out-String
-        if ($conf -notmatch 'static') { $failed += 'qmake QT_CONFIG 中没有 static' }
+        # 注意：Qt 6 的 qmake QT_CONFIG 里不会出现 static，不能拿它判断静态性
     }
     if (-not $ver) {
         $verFile = Join-Path $InstallPrefix 'lib\cmake\Qt6\Qt6ConfigVersion.cmake'
